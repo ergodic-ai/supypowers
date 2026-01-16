@@ -28,6 +28,12 @@ supypowers examples docs --format md
 supypowers examples run exponents:compute_sqrt "{'x': 9}"
 ```
 
+Initialize a new `supypowers/` folder with starter templates (`hello.py` + `hello.md`):
+
+```bash
+supypowers . init
+```
+
 If you don’t have the `supypowers` command on your PATH yet, you can always run it via `uv` from this repo:
 
 ```bash
