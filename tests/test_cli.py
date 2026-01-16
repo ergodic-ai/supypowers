@@ -40,6 +40,25 @@ def _run_uv_superpowers(*args: str) -> dict:
 
 
 class TestCLI(unittest.TestCase):
+    def test_init_creates_templates(self) -> None:
+        tmp = ROOT / "tests" / ".tmp_init"
+        if tmp.exists():
+            # best-effort cleanup
+            for p in sorted(tmp.rglob("*"), reverse=True):
+                if p.is_file() or p.is_symlink():
+                    p.unlink()
+                elif p.is_dir():
+                    p.rmdir()
+            tmp.rmdir()
+        tmp.mkdir(parents=True, exist_ok=False)
+
+        # init should create <tmp>/supypowers/hello.py and hello.md
+        out = _run_uv_superpowers(str(tmp), "init", "--force")
+        self.assertTrue(out["ok"])
+        sp_dir = tmp / "supypowers"
+        self.assertTrue((sp_dir / "hello.py").exists())
+        self.assertTrue((sp_dir / "hello.md").exists())
+
     def test_docs_includes_exponents(self) -> None:
         docs = _run_uv_superpowers(str(EXAMPLES), "docs")
         # docs is a list of {"script": ..., "functions": [...]}

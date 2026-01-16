@@ -14,6 +14,13 @@ def app() -> None:
     parser.add_argument("folder", type=Path, help="Folder containing scripts")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    init_p = sub.add_parser("init", help="Initialize a supypowers folder with starter templates")
+    init_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing supypowers/hello.py and supypowers/hello.md if they exist.",
+    )
+
     run_p = sub.add_parser("run", help="Run a function in a script via `uv run`")
     run_p.add_argument("target", type=str, help="script:function (script may omit .py)")
     run_p.add_argument("input_data", type=str, help="Input data (JSON or Python-literal-ish)")
@@ -52,6 +59,9 @@ def app() -> None:
 
     args = parser.parse_args()
 
+    if args.command == "init":
+        _cmd_init(args.folder, force=bool(args.force))
+        return
     if args.command == "run":
         _cmd_run(args.folder, args.target, args.input_data, args.secrets)
         return
@@ -67,6 +77,44 @@ def app() -> None:
         return
 
     parser.error("unknown command")
+
+
+def _cmd_init(folder: Path, *, force: bool) -> None:
+    if not folder.exists() or not folder.is_dir():
+        print(json.dumps({"ok": False, "error": f"folder not found: {folder}"}))
+        raise SystemExit(2)
+
+    sp_dir = (folder / "supypowers").resolve()
+    sp_dir.mkdir(parents=True, exist_ok=True)
+
+    hello_py = sp_dir / "hello.py"
+    hello_md = sp_dir / "hello.md"
+
+    if not force:
+        for p in (hello_py, hello_md):
+            if p.exists():
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": f"refusing to overwrite existing file: {p}",
+                            "hint": "re-run with --force to overwrite",
+                        }
+                    )
+                )
+                raise SystemExit(2)
+
+    hello_py.write_text(_HELLO_PY, encoding="utf-8")
+    hello_md.write_text(_HELLO_MD, encoding="utf-8")
+
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "created": [str(hello_py), str(hello_md)],
+            }
+        )
+    )
 
 
 def _cmd_run(folder: Path, target: str, input_data: str, secrets: list[str]) -> None:
@@ -394,6 +442,96 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+"""
+
+
+_HELLO_PY = """# /// script
+# dependencies = [
+#   "pydantic",
+# ]
+# ///
+
+\"\"\"hello.py - a starter supypower script
+
+This file is meant to be copied and edited.
+\"\"\"
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+
+class HelloInput(BaseModel):
+    name: str = Field(..., description="Name to greet.")
+
+
+class HelloOutput(BaseModel):
+    greeting: str = Field(..., description="A friendly greeting.")
+
+
+def hello(input: HelloInput) -> HelloOutput:
+    \"\"\"Say hello.\"\"\"
+    return HelloOutput(greeting=f"Hello, {input.name}!")
+"""
+
+
+_HELLO_MD = """## Building a supypower script (for AI agents)
+
+Your job: create a Python script that defines one or more *supypower* functions.
+
+### 1) Add uv inline dependencies
+
+At the very top of the file, include:
+
+```text
+# /// script
+# dependencies = [
+#   "pydantic",
+# ]
+# ///
+```
+
+This allows the script to run in isolation without a virtualenv.
+
+### 2) Define a Pydantic input model
+
+Each supypower function must accept exactly one parameter named `input`.
+The type of `input` must be a Pydantic `BaseModel`.
+
+### 3) (Optional) Define a Pydantic output model
+
+Returning a Pydantic model is recommended because it produces clean JSON output.
+You can return any type, but JSON-serializable types are best.
+
+### 4) Write the function
+
+Contract:
+- The function has exactly **one** parameter named **`input`**
+- `input` is annotated as a **Pydantic BaseModel**
+- Add a clear docstring (used for documentation)
+
+Example:
+
+```python
+def hello(input: HelloInput) -> HelloOutput:
+    \"\"\"Say hello.\"\"\"
+    return HelloOutput(greeting=f\"Hello, {input.name}!\")
+```
+
+### 5) Run it
+
+From a folder that contains your script (e.g. `.`):
+
+```bash
+supypowers . run hello:hello \"{'name': 'World'}\"
+```
+
+### 6) Generate documentation
+
+```bash
+supypowers . docs --format json --output docs.json
+supypowers . docs --format md --output docs.md
+```
 """
 
 
