@@ -53,14 +53,14 @@ class TestCLI(unittest.TestCase):
         tmp.mkdir(parents=True, exist_ok=False)
 
         # init should create <tmp>/supypowers/hello.py and hello.md
-        out = _run_uv_superpowers(str(tmp), "init", "--force")
+        out = _run_uv_superpowers("init", str(tmp), "--force")
         self.assertTrue(out["ok"])
         sp_dir = tmp / "supypowers"
         self.assertTrue((sp_dir / "hello.py").exists())
         self.assertTrue((sp_dir / "hello.md").exists())
 
     def test_docs_includes_exponents(self) -> None:
-        docs = _run_uv_superpowers(str(EXAMPLES), "docs")
+        docs = _run_uv_superpowers("docs", str(EXAMPLES))
         # docs is a list of {"script": ..., "functions": [...]}
         by_script = {Path(item["script"]).name: item for item in docs}
         self.assertIn("exponents.py", by_script)
@@ -70,7 +70,7 @@ class TestCLI(unittest.TestCase):
 
     def test_docs_markdown_renders(self) -> None:
         # Just ensure it runs and produces markdown-like output.
-        cmd = ["uv", "run", "supypowers", str(EXAMPLES), "docs", "--format", "md"]
+        cmd = ["uv", "run", "supypowers", "docs", str(EXAMPLES), "--format", "md"]
         proc = subprocess.run(
             cmd,
             cwd=str(ROOT),
@@ -84,19 +84,19 @@ class TestCLI(unittest.TestCase):
         self.assertIn("### `", proc.stdout)
 
     def test_run_exponents_compute_sqrt(self) -> None:
-        out = _run_uv_superpowers(str(EXAMPLES), "run", "exponents:compute_sqrt", "{'x': 9}")
+        out = _run_uv_superpowers("run", str(EXAMPLES), "exponents:compute_sqrt", "{'x': 9}")
         self.assertTrue(out["ok"])
         self.assertEqual(out["data"]["result"], 3.0)
 
     def test_run_strings_reverse(self) -> None:
-        out = _run_uv_superpowers(str(EXAMPLES), "run", "strings:reverse_string", "{'s': 'abc'}")
+        out = _run_uv_superpowers("run", str(EXAMPLES), "strings:reverse_string", "{'s': 'abc'}")
         self.assertTrue(out["ok"])
         self.assertEqual(out["data"]["result"], "cba")
 
     def test_run_dates_add_days(self) -> None:
         out = _run_uv_superpowers(
-            str(EXAMPLES),
             "run",
+            str(EXAMPLES),
             "dates:add_days",
             "{'d': '2025-01-01', 'days': 10}",
         )
@@ -104,7 +104,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(out["data"]["result"], "2025-01-11")
 
     def test_run_non_pydantic_output_allowed(self) -> None:
-        out = _run_uv_superpowers(str(EXAMPLES), "run", "misc:echo", "{'message': 'hi'}")
+        out = _run_uv_superpowers("run", str(EXAMPLES), "misc:echo", "{'message': 'hi'}")
         self.assertTrue(out["ok"])
         self.assertEqual(out["data"], "hi")
 

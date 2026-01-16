@@ -24,21 +24,21 @@ If you prefer installing via `uv` tools (to get a global `supypowers` command wi
 Try the bundled examples:
 
 ```bash
-supypowers examples docs --format md
-supypowers examples run exponents:compute_sqrt "{'x': 9}"
+supypowers docs examples --format md
+supypowers run examples exponents:compute_sqrt "{'x': 9}"
 ```
 
 Initialize a new `supypowers/` folder with starter templates (`hello.py` + `hello.md`):
 
 ```bash
-supypowers . init
+supypowers init .
 ```
 
 If you don’t have the `supypowers` command on your PATH yet, you can always run it via `uv` from this repo:
 
 ```bash
-uv run supypowers examples docs --format md
-uv run supypowers examples run exponents:compute_sqrt "{'x': 9}"
+uv run supypowers docs examples --format md
+uv run supypowers run examples exponents:compute_sqrt "{'x': 9}"
 ```
 
 ## Core concepts
@@ -73,7 +73,7 @@ See `examples/exponents.py` for the canonical pattern.
 ### Syntax
 
 ```bash
-supypowers <folder> run <script>:<function> <input_data> [--secrets ...]
+supypowers run <folder> <script>:<function> <input_data> [--secrets ...]
 ```
 
 ### Input format (`<input_data>`)
@@ -95,10 +95,10 @@ They are exposed to your script via environment variables.
 ### Examples
 
 ```bash
-supypowers examples run exponents:compute_sqrt "{'x': 9}"
-supypowers examples run strings:reverse_string "{'s': 'abc'}"
-supypowers examples run dates:add_days "{'d': '2025-01-01', 'days': 10}"
-supypowers examples run exponents:compute_sqrt "{'x': 9}" --secrets .env --secrets API_KEY=abc
+supypowers run examples exponents:compute_sqrt "{'x': 9}"
+supypowers run examples strings:reverse_string "{'s': 'abc'}"
+supypowers run examples dates:add_days "{'d': '2025-01-01', 'days': 10}"
+supypowers run examples exponents:compute_sqrt "{'x': 9}" --secrets .env --secrets API_KEY=abc
 ```
 
 ## Generating documentation
@@ -106,8 +106,8 @@ supypowers examples run exponents:compute_sqrt "{'x': 9}" --secrets .env --secre
 ### JSON docs (for machines / LLM context)
 
 ```bash
-supypowers <folder> docs --format json
-supypowers <folder> docs --format json --output docs.json
+supypowers docs <folder> --format json
+supypowers docs <folder> --format json --output docs.json
 ```
 
 The JSON output is a list of:
@@ -119,8 +119,8 @@ The JSON output is a list of:
 ### Markdown docs (for humans)
 
 ```bash
-supypowers <folder> docs --format md
-supypowers <folder> docs --format md --output docs.md
+supypowers docs <folder> --format md
+supypowers docs <folder> --format md --output docs.md
 ```
 
 ### Options
@@ -143,8 +143,8 @@ uv tool update-shell
 Then open a new shell (or reload your shell config) and run:
 
 ```bash
-supypowers examples docs
-supypowers examples run exponents:compute_sqrt \"{'x': 9}\"
+supypowers docs examples
+supypowers run examples exponents:compute_sqrt \"{'x': 9}\"
 ```
 
 ## Example scripts

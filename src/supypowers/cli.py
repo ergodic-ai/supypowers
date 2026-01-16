@@ -11,10 +11,10 @@ from supypowers.util import parse_secrets_args, resolve_script_path
 
 def app() -> None:
     parser = argparse.ArgumentParser(prog="supypowers")
-    parser.add_argument("folder", type=Path, help="Folder containing scripts")
     sub = parser.add_subparsers(dest="command", required=True)
 
     init_p = sub.add_parser("init", help="Initialize a supypowers folder with starter templates")
+    init_p.add_argument("folder", type=Path, help="Folder to initialize")
     init_p.add_argument(
         "--force",
         action="store_true",
@@ -22,6 +22,7 @@ def app() -> None:
     )
 
     run_p = sub.add_parser("run", help="Run a function in a script via `uv run`")
+    run_p.add_argument("folder", type=Path, help="Folder containing scripts")
     run_p.add_argument("target", type=str, help="script:function (script may omit .py)")
     run_p.add_argument("input_data", type=str, help="Input data (JSON or Python-literal-ish)")
     run_p.add_argument(
@@ -32,6 +33,7 @@ def app() -> None:
     )
 
     docs_p = sub.add_parser("docs", help="Emit docs JSON or Markdown for discovered functions")
+    docs_p.add_argument("folder", type=Path, help="Folder containing scripts")
     docs_p.add_argument("--recursive", action="store_true", help="Recurse into subfolders")
     docs_p.add_argument(
         "--format",

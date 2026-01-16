@@ -20,9 +20,9 @@ for example, in examples/exponents.py we have an example of how I want these fun
 
 a) a CLI like
 
-`supypowers <folder_name> run <script>:<function> <input_json> --secrets <env_file_or_secrets>`
+`supypowers run <folder_name> <script>:<function> <input_json> --secrets <env_file_or_secrets>`
 
-`supypowers examples run exponents:compute_sqrt "{a:1}" ` which executes the function in the script. It should use uv's dependencies using uv's scripts framework
+`supypowers run examples exponents:compute_sqrt "{a:1}" ` which executes the function in the script. It should use uv's dependencies using uv's scripts framework
 
 b) a way to get the documentation out of every function that's accessible within the folder.. essentially I want a context to pass to the LLM. Each function should come with:
 
