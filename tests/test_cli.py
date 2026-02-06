@@ -79,8 +79,11 @@ class TestCLI(unittest.TestCase):
             text=True,
         )
         self.assertEqual(proc.returncode, 0, msg=f"stderr={proc.stderr}\nstdout={proc.stdout}")
-        self.assertIn("## Supypowers", proc.stdout)
-        self.assertIn("### `", proc.stdout)
+        # SKILL.md format: YAML frontmatter + heading + function sections
+        self.assertIn("---", proc.stdout)
+        self.assertIn("name: supypowers-reference", proc.stdout)
+        self.assertIn("# Supypowers", proc.stdout)
+        self.assertIn("## `", proc.stdout)
 
     def test_run_exponents_compute_sqrt(self) -> None:
         out = _run_uv_superpowers("run", "--examples", "exponents:compute_sqrt", "{'x': 9}")

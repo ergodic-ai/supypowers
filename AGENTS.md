@@ -1,8 +1,13 @@
+---
+name: supypowers
+description: Run Python functions as tools without managing environments or dependencies. Use when you need to execute a supypower function, create a new one, or inspect available capabilities.
+---
+
 # Supypowers — Agent Guide
 
 You can run Python functions as tools without managing environments or dependencies.
 
-## TL;DR
+## Quick Start
 
 ```bash
 supypowers skills              # See all available functions + how to use them
@@ -37,11 +42,11 @@ supypowers skills
 ```
 
 This shows you:
-- All available functions
-- Their input schemas
-- Example commands to run them
+- All available functions with descriptions
+- Input field tables (type, required, description)
+- Example commands to run each function
 
-Or get raw JSON (for programmatic use):
+For full JSON schemas (programmatic use):
 ```bash
 supypowers docs --format json
 ```
@@ -58,7 +63,7 @@ supypowers run hello:hello '{"name": "World"}'
 supypowers run math:calculate '{"x": 10, "y": 5}'
 ```
 
-**Output:** Always JSON with `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`
+**Output:** Always JSON — `{"ok": true, "data": ...}` or `{"ok": false, "error": "..."}`
 
 **With secrets:**
 ```bash
@@ -78,7 +83,6 @@ This creates `supypowers/my_tool.py` with a ready-to-edit template.
 
 ### Edit the file
 
-The template looks like:
 ```python
 # /// script
 # dependencies = [
@@ -98,7 +102,6 @@ class MyToolOutput(BaseModel):
 def my_tool(input: MyToolInput) -> MyToolOutput:
     """TODO: describe what this function does."""
     try:
-        # Your logic here
         return MyToolOutput(success=True, result=f"Got: {input.value}")
     except Exception as e:
         return MyToolOutput(success=False, error=str(e))
@@ -116,14 +119,16 @@ def my_tool(input: MyToolInput) -> MyToolOutput:
 supypowers run my_tool:my_tool '{"value": "test"}'
 ```
 
-## Rules (Important!)
+## Rules
 
-1. **One parameter named `input`** — Function signature must be `def func(input: MyModel)`
-2. **Pydantic input** — The `input` type must be a `BaseModel`
-3. **No print()** — It breaks JSON output
-4. **No input()** — There's no interactive terminal
-5. **Return errors, don't raise** — Use `success: bool` pattern in output
-6. **Declare dependencies** — Add all imports to the `# /// script` block
+| # | Rule |
+|---|------|
+| 1 | Function must have exactly **one** parameter named `input` |
+| 2 | `input` must be typed as a Pydantic `BaseModel` |
+| 3 | Declare all dependencies in the `# /// script` block |
+| 4 | **No `print()`** — it breaks JSON output |
+| 5 | **No `input()`** — there is no interactive terminal |
+| 6 | Return errors in output; don't raise exceptions |
 
 ## Common Patterns
 
@@ -155,6 +160,15 @@ class SearchInput(BaseModel):
     limit: int = Field(default=10, description="Optional, defaults to 10")
 ```
 
+## Troubleshooting
+
+| Error | Fix |
+|-------|-----|
+| `function not found` | Check spelling — case-sensitive |
+| `input must be a Pydantic BaseModel` | Add type annotation: `def func(input: MyModel)` |
+| `function must accept exactly one parameter` | Only one param named `input` allowed |
+| Import error | Add the package to `# /// script` dependencies |
+
 ## File Structure
 
 ```
@@ -165,15 +179,6 @@ project/
 │   └── hello.md         # Guide for writing scripts (optional reading)
 └── ...
 ```
-
-## Quick Debugging
-
-| Error | Fix |
-|-------|-----|
-| `function not found` | Check spelling, it's case-sensitive |
-| `input must be a Pydantic BaseModel` | Add type annotation: `def func(input: MyModel)` |
-| `function must accept exactly one parameter` | Only one param named `input` allowed |
-| Import error | Add the package to `# /// script` dependencies |
 
 ## Summary
 
