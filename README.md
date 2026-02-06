@@ -21,7 +21,7 @@ supypowers run script:func '{...}'   # Do it
 supypowers new name                  # Make something new
 ```
 
-All scripts live in the `supypowers/` folder. All output is JSON.
+All scripts live in the `powers/` folder. All output is JSON.
 
 ## Prerequisites
 
@@ -50,13 +50,13 @@ pip install supypowers
 ## Quickstart
 
 ```bash
-# 1. Initialize a new supypowers/ folder
+# 1. Initialize a new powers/ folder
 supypowers init
 
 # 2. Create a new script from template
 supypowers new my_tool
 
-# 3. Edit supypowers/my_tool.py to implement your logic
+# 3. Edit powers/my_tool.py to implement your logic
 
 # 4. Run it
 supypowers run my_tool:my_tool '{"value": "test"}'
@@ -65,7 +65,7 @@ supypowers run my_tool:my_tool '{"value": "test"}'
 supypowers docs --format json
 ```
 
-The `init` command creates `supypowers/hello.py` (example) and `supypowers/hello.md` (instructions for agents).
+The `init` command creates `powers/hello.py` (example) and `powers/hello.md` (instructions for agents).
 
 Try the bundled examples (when running from source):
 
@@ -78,11 +78,11 @@ supypowers docs --examples --format md
 
 ### Folder convention
 
-All scripts live in a `supypowers/` folder in your project root. This is hardcoded by convention to keep the CLI simple for agents.
+All scripts live in a `powers/` folder in your project root. This is hardcoded by convention to keep the CLI simple for agents.
 
 ```
 my-project/
-├── supypowers/
+├── powers/
 │   ├── hello.py
 │   └── math.py
 └── ...
@@ -113,6 +113,24 @@ A function is considered a "supypower" if it matches this contract:
 
 See `examples/exponents.py` in the source repo for the canonical pattern.
 
+### Media tools convention
+
+Tools that generate media files (images, audio, video, documents) should include a `_media` list in their output:
+
+```json
+{
+  "_media": [
+    {"path": "/absolute/path/to/file.png", "type": "image"},
+    {"path": "/absolute/path/to/audio.wav", "type": "audio"}
+  ]
+}
+```
+
+- **Valid types:** `image`, `audio`, `video`, `document`
+- **Paths must be absolute** so consumers don't need to guess the working directory
+- **Output directory:** Media tools should accept an `output_dir` parameter and create the directory if needed
+- **Legacy compatibility:** Consumers should also check for `_images`/`images` (list of paths) and `path` with an image extension
+
 ## Creating new scripts
 
 ### Syntax
@@ -121,7 +139,7 @@ See `examples/exponents.py` in the source repo for the canonical pattern.
 supypowers new <name>
 ```
 
-Creates a new script `supypowers/<name>.py` from a template with:
+Creates a new script `powers/<name>.py` from a template with:
 - Dependency block already set up
 - Input/Output Pydantic models
 - Error handling pattern
@@ -131,7 +149,7 @@ Creates a new script `supypowers/<name>.py` from a template with:
 
 ```bash
 supypowers new fetch_weather
-# Creates supypowers/fetch_weather.py
+# Creates powers/fetch_weather.py
 # Edit the file, then run:
 supypowers run fetch_weather:fetch_weather '{"city": "London"}'
 ```
@@ -144,7 +162,7 @@ supypowers run fetch_weather:fetch_weather '{"city": "London"}'
 supypowers run <script>:<function> <input_data> [--secrets ...]
 ```
 
-The CLI looks for scripts in the `supypowers/` folder of the current directory.
+The CLI looks for scripts in the `powers/` folder of the current directory.
 
 ### Input format (`<input_data>`)
 
@@ -165,7 +183,7 @@ They are exposed to your script via environment variables.
 ### Options
 
 - `--root <path>`: Use a different root directory (default: current directory)
-- `--examples`: Run from bundled examples instead of local `supypowers/` folder
+- `--examples`: Run from bundled examples instead of local `powers/` folder
 
 ### Examples
 
@@ -205,7 +223,7 @@ supypowers docs --format md --output docs.md
 ### Options
 
 - `--root <path>`: Use a different root directory (default: current directory)
-- `--examples`: Document bundled examples instead of local `supypowers/` folder
+- `--examples`: Document bundled examples instead of local `powers/` folder
 - `--recursive`: recurse into subfolders and include `**/*.py`
 - `--require-marker`: only include functions explicitly marked (currently: decorator named `superpower`)
 

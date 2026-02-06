@@ -5,7 +5,7 @@ description: How to create supypowers scripts. Use when you need to build a new 
 
 # Creating Supypowers Scripts
 
-Each supypowers script is a self-contained Python file in the `supypowers/` folder.
+Each supypowers script is a self-contained Python file in the `powers/` folder.
 Scripts are run via `supypowers run <script>:<function> '<json>'` and always return JSON.
 
 ## Quick Start
@@ -115,6 +115,29 @@ def process(input: ProcessInput) -> ProcessOutput:
     except Exception as e:
         return ProcessOutput(success=False, error=str(e))
 ```
+
+### Media output (images, audio, etc.)
+
+Tools that generate media files SHOULD include a `_media` list in their output:
+
+```python
+class GenOutput(BaseModel):
+    success: bool
+    _media: list[dict] = Field(default_factory=list, description="Generated media files")
+
+def generate(input: GenInput) -> GenOutput:
+    """Generate an image."""
+    path = Path(input.output_dir) / f"{hash}.png"
+    # ... generate file ...
+    return GenOutput(
+        success=True,
+        _media=[{"path": str(path.resolve()), "type": "image"}],
+    )
+```
+
+Each `_media` entry: `{"path": "/absolute/path.png", "type": "image"}`.
+Valid types: `image`, `audio`, `video`, `document`.
+All paths MUST be absolute. The tool MUST create `output_dir` if it doesn't exist.
 
 ## Troubleshooting
 

@@ -79,7 +79,7 @@ When you need a capability that doesn't exist:
 supypowers new my_tool
 ```
 
-This creates `supypowers/my_tool.py` with a ready-to-edit template.
+This creates `powers/my_tool.py` with a ready-to-edit template.
 
 ### Edit the file
 
@@ -173,7 +173,7 @@ class SearchInput(BaseModel):
 
 ```
 project/
-├── supypowers/          # All scripts go here
+├── powers/              # All scripts go here
 │   ├── hello.py
 │   ├── my_tool.py
 │   └── hello.md         # Guide for writing scripts (optional reading)

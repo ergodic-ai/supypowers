@@ -10,7 +10,7 @@ Supypowers scripts are modular capabilities that extend an AI agent's functional
 |---|---|
 | `SKILL.md` (instructions) | `supypowers skills` output |
 | Skill metadata (name, description) | YAML frontmatter in skills output |
-| Bundled scripts | `supypowers/*.py` files |
+| Bundled scripts | `powers/*.py` files |
 | Skill resources | Input/output schemas, docstrings |
 | Progressive loading | `supypowers docs --format json` for on-demand schema lookup |
 
@@ -200,7 +200,7 @@ supypowers run weather:get_weather '{"city": "..."}'
 
 ```
 project/
-├── supypowers/              # All scripts go here
+├── powers/                  # All scripts go here
 │   ├── hello.py             # Starter example
 │   ├── weather.py           # Your custom scripts
 │   └── ...

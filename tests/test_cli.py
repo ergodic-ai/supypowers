@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -38,6 +39,22 @@ def _run_uv_superpowers(*args: str, cwd: str | None = None) -> dict:
         raise AssertionError(f"stdout was not JSON\ncmd={cmd}\nstdout={out}\nstderr={err}\nerr={e}")
 
 
+def _run_uv_superpowers_raw(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess:
+    """Run supypowers and return the raw CompletedProcess (no assertion on returncode)."""
+    if shutil.which("uv") is None:
+        raise unittest.SkipTest("uv not found on PATH")
+
+    cmd = ["uv", "run", "supypowers", *args]
+    return subprocess.run(
+        cmd,
+        cwd=cwd or str(ROOT),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=os.environ.copy(),
+        text=True,
+    )
+
+
 class TestCLI(unittest.TestCase):
     def test_init_creates_templates(self) -> None:
         tmp = ROOT / "tests" / ".tmp_init"
@@ -51,10 +68,10 @@ class TestCLI(unittest.TestCase):
             tmp.rmdir()
         tmp.mkdir(parents=True, exist_ok=False)
 
-        # init should create <tmp>/supypowers/hello.py and hello.md
+        # init should create <tmp>/powers/hello.py and hello.md
         out = _run_uv_superpowers("init", "--root", str(tmp), "--force")
         self.assertTrue(out["ok"])
-        sp_dir = tmp / "supypowers"
+        sp_dir = tmp / "powers"
         self.assertTrue((sp_dir / "hello.py").exists())
         self.assertTrue((sp_dir / "hello.md").exists())
 
@@ -105,10 +122,281 @@ class TestCLI(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertEqual(out["data"]["result"], "2025-01-11")
 
+    def test_run_noisy_stdout_isolated(self) -> None:
+        out = _run_uv_superpowers("run", "--examples", "noisy:noisy", "{'message': 'hello'}")
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["data"]["echoed"], "hello")
+
     def test_run_non_pydantic_output_allowed(self) -> None:
         out = _run_uv_superpowers("run", "--examples", "misc:echo", "{'message': 'hi'}")
         self.assertTrue(out["ok"])
         self.assertEqual(out["data"], "hi")
+
+
+class TestCLIErrors(unittest.TestCase):
+    """Tests for error paths in CLI commands."""
+
+    def test_run_bad_target_no_colon(self) -> None:
+        proc = _run_uv_superpowers_raw("run", "--examples", "exponents", "{}")
+        self.assertNotEqual(proc.returncode, 0)
+        out = json.loads(proc.stdout.strip())
+        self.assertFalse(out["ok"])
+        self.assertIn("script:function", out["error"])
+
+    def test_run_nonexistent_script(self) -> None:
+        proc = _run_uv_superpowers_raw("run", "--examples", "nonexistent:func", "{}")
+        self.assertNotEqual(proc.returncode, 0)
+
+    def test_run_nonexistent_function(self) -> None:
+        proc = _run_uv_superpowers_raw(
+            "run", "--examples", "exponents:no_such_func", "{}"
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        out = json.loads(proc.stdout.strip())
+        self.assertFalse(out["ok"])
+        # The error comes through either as a direct message or via uv_stdout
+        error_text = out.get("error", "") + out.get("uv_stdout", "")
+        self.assertIn("function not found", error_text)
+
+    def test_run_pydantic_validation_error(self) -> None:
+        # compute_sqrt requires 'x' (float), pass wrong field name
+        proc = _run_uv_superpowers_raw(
+            "run", "--examples", "exponents:compute_sqrt", '{"wrong_field": 1}'
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        out = json.loads(proc.stdout.strip())
+        self.assertFalse(out["ok"])
+
+    def test_run_invalid_json_input(self) -> None:
+        proc = _run_uv_superpowers_raw(
+            "run", "--examples", "exponents:compute_sqrt", "not json at all %%"
+        )
+        self.assertNotEqual(proc.returncode, 0)
+
+    def test_init_refuses_overwrite_without_force(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # First init
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            # Second init without --force should fail
+            proc = _run_uv_superpowers_raw("init", "--root", tmp)
+            self.assertNotEqual(proc.returncode, 0)
+            out = json.loads(proc.stdout.strip())
+            self.assertFalse(out["ok"])
+            self.assertIn("refusing to overwrite", out["error"])
+
+
+class TestNew(unittest.TestCase):
+    """Tests for the 'new' command."""
+
+    def test_new_creates_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # First init to create powers/
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            # Create a new script
+            out = _run_uv_superpowers("new", "my_tool", "--root", tmp)
+            self.assertTrue(out["ok"])
+            script = Path(tmp) / "powers" / "my_tool.py"
+            self.assertTrue(script.exists())
+            content = script.read_text()
+            self.assertIn("class MyToolInput", content)
+            self.assertIn("class MyToolOutput", content)
+            self.assertIn("def my_tool(input:", content)
+
+    def test_new_refuses_overwrite_without_force(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            _run_uv_superpowers("new", "my_tool", "--root", tmp)
+            # Second new without --force should fail
+            proc = _run_uv_superpowers_raw("new", "my_tool", "--root", tmp)
+            self.assertNotEqual(proc.returncode, 0)
+            out = json.loads(proc.stdout.strip())
+            self.assertFalse(out["ok"])
+            self.assertIn("already exists", out["error"])
+
+    def test_new_invalid_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            proc = _run_uv_superpowers_raw("new", "123-bad!", "--root", tmp)
+            self.assertNotEqual(proc.returncode, 0)
+            out = json.loads(proc.stdout.strip())
+            self.assertFalse(out["ok"])
+            self.assertIn("invalid script name", out["error"])
+
+    def test_new_no_powers_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = _run_uv_superpowers_raw("new", "my_tool", "--root", tmp)
+            self.assertNotEqual(proc.returncode, 0)
+            out = json.loads(proc.stdout.strip())
+            self.assertFalse(out["ok"])
+            self.assertIn("folder not found", out["error"])
+
+
+class TestSkills(unittest.TestCase):
+    """Tests for the 'skills' command."""
+
+    def test_skills_examples(self) -> None:
+        # skills doesn't support --examples, so test with an init'd folder
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            proc = _run_uv_superpowers_raw("skills", "--root", tmp)
+            self.assertEqual(proc.returncode, 0)
+            out = proc.stdout
+            self.assertIn("---", out)
+            self.assertIn("name: supypowers", out)
+            self.assertIn("# Supypowers", out)
+
+    def test_skills_output_to_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            outfile = Path(tmp) / "SKILL.md"
+            out = _run_uv_superpowers("skills", "--root", tmp, "--output", str(outfile))
+            self.assertTrue(out["ok"])
+            self.assertTrue(outfile.exists())
+            content = outfile.read_text()
+            self.assertIn("name: supypowers", content)
+
+
+class TestLegacyFolderFallback(unittest.TestCase):
+    """Tests for backward-compat supypowers/ -> powers/ fallback."""
+
+    def test_legacy_folder_fallback_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # Create a supypowers/ folder (legacy name) with a valid script
+            legacy_dir = Path(tmp) / "supypowers"
+            legacy_dir.mkdir()
+            (legacy_dir / "hello.py").write_text(
+                '# /// script\n# dependencies = ["pydantic"]\n# ///\n'
+                'from pydantic import BaseModel, Field\n'
+                'class HiInput(BaseModel):\n'
+                '    name: str = Field(...)\n'
+                'class HiOutput(BaseModel):\n'
+                '    greeting: str = Field(...)\n'
+                'def hello(input: HiInput) -> HiOutput:\n'
+                '    """Say hi."""\n'
+                '    return HiOutput(greeting=f"Hi {input.name}")\n'
+            )
+            # Run against the legacy folder — should work with deprecation warning
+            proc = _run_uv_superpowers_raw(
+                "run", "--root", tmp, "hello:hello", '{"name": "World"}'
+            )
+            self.assertEqual(proc.returncode, 0)
+            out = json.loads(proc.stdout.strip())
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["data"]["greeting"], "Hi World")
+            self.assertIn("deprecated", proc.stderr)
+
+
+class TestUtilUnit(unittest.TestCase):
+    """Unit tests for util.py helpers (no uv needed)."""
+
+    def test_parse_dotenv(self) -> None:
+        from supypowers.util import _parse_dotenv
+
+        text = """
+# comment
+FOO=bar
+BAZ="quoted value"
+export EXPORTED=yes
+EMPTY=
+
+invalid line without equals
+"""
+        result = _parse_dotenv(text)
+        self.assertEqual(result["FOO"], "bar")
+        self.assertEqual(result["BAZ"], "quoted value")
+        self.assertEqual(result["EXPORTED"], "yes")
+        self.assertEqual(result["EMPTY"], "")
+
+    def test_parse_secrets_args_inline(self) -> None:
+        from supypowers.util import parse_secrets_args
+
+        result = parse_secrets_args(["KEY1=val1", "KEY2=val2"])
+        self.assertEqual(result, {"KEY1": "val1", "KEY2": "val2"})
+
+    def test_parse_secrets_args_dotenv_file(self) -> None:
+        from supypowers.util import parse_secrets_args
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
+            f.write("SECRET=from_file\n")
+            f.flush()
+            try:
+                result = parse_secrets_args([f.name])
+                self.assertEqual(result["SECRET"], "from_file")
+            finally:
+                os.unlink(f.name)
+
+    def test_parse_secrets_args_invalid(self) -> None:
+        from supypowers.util import parse_secrets_args
+
+        with self.assertRaises(ValueError):
+            parse_secrets_args(["not_a_file_and_no_equals"])
+
+    def test_resolve_script_path(self) -> None:
+        from supypowers.util import resolve_script_path
+
+        examples = ROOT / "examples" / "powers"
+        # With .py suffix
+        p = resolve_script_path(examples, "exponents.py")
+        self.assertTrue(p.exists())
+        # Without .py suffix
+        p = resolve_script_path(examples, "exponents")
+        self.assertTrue(p.exists())
+
+    def test_resolve_script_path_not_found(self) -> None:
+        from supypowers.util import resolve_script_path
+
+        examples = ROOT / "examples" / "powers"
+        with self.assertRaises(FileNotFoundError):
+            resolve_script_path(examples, "does_not_exist")
+
+
+class TestScriptMetadataUnit(unittest.TestCase):
+    """Unit tests for uv_script_metadata.py (no uv needed)."""
+
+    def test_read_dependencies(self) -> None:
+        from supypowers.uv_script_metadata import read_uv_script_dependencies
+
+        script = ROOT / "examples" / "powers" / "exponents.py"
+        deps = read_uv_script_dependencies(script)
+        self.assertIn("pydantic", deps)
+
+    def test_read_dependencies_multi(self) -> None:
+        from supypowers.uv_script_metadata import read_uv_script_dependencies
+
+        script = ROOT / "examples" / "powers" / "fetch.py"
+        deps = read_uv_script_dependencies(script)
+        self.assertIn("pydantic", deps)
+        self.assertIn("httpx", deps)
+
+    def test_read_dependencies_no_block(self) -> None:
+        from supypowers.uv_script_metadata import read_uv_script_dependencies
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("# no script block here\nprint('hello')\n")
+            f.flush()
+            try:
+                deps = read_uv_script_dependencies(Path(f.name))
+                self.assertEqual(deps, [])
+            finally:
+                os.unlink(f.name)
+
+    def test_read_dependencies_nonexistent_file(self) -> None:
+        from supypowers.uv_script_metadata import read_uv_script_dependencies
+
+        deps = read_uv_script_dependencies(Path("/nonexistent/path.py"))
+        self.assertEqual(deps, [])
+
+
+class TestToClassName(unittest.TestCase):
+    """Unit tests for _to_class_name helper."""
+
+    def test_snake_to_pascal(self) -> None:
+        from supypowers.cli import _to_class_name
+
+        self.assertEqual(_to_class_name("my_tool"), "MyTool")
+        self.assertEqual(_to_class_name("fetch_weather"), "FetchWeather")
+        self.assertEqual(_to_class_name("simple"), "Simple")
+        self.assertEqual(_to_class_name("a_b_c"), "ABC")
 
 
 if __name__ == "__main__":

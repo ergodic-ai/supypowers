@@ -9,24 +9,25 @@ from supypowers.uv_exec import UVRunError, uv_run_python_code
 from supypowers.util import parse_secrets_args, resolve_script_path
 
 
-SUPYPOWERS_FOLDER = "supypowers"
+POWERS_FOLDER = "powers"
+_LEGACY_FOLDER = "supypowers"
 
 
 def app() -> None:
     parser = argparse.ArgumentParser(prog="supypowers")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    init_p = sub.add_parser("init", help="Initialize a supypowers/ folder with starter templates")
+    init_p = sub.add_parser("init", help="Initialize a powers/ folder with starter templates")
     init_p.add_argument(
         "--root",
         type=Path,
         default=Path("."),
-        help="Root directory (default: current directory). Creates supypowers/ inside it.",
+        help="Root directory (default: current directory). Creates powers/ inside it.",
     )
     init_p.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite existing supypowers/hello.py and supypowers/hello.md if they exist.",
+        help="Overwrite existing powers/hello.py and powers/hello.md if they exist.",
     )
 
     new_p = sub.add_parser("new", help="Create a new supypower script from template")
@@ -35,7 +36,7 @@ def app() -> None:
         "--root",
         type=Path,
         default=Path("."),
-        help="Root directory containing the supypowers/ folder (default: current directory).",
+        help="Root directory containing the powers/ folder (default: current directory).",
     )
     new_p.add_argument(
         "--force",
@@ -50,12 +51,12 @@ def app() -> None:
         "--root",
         type=Path,
         default=Path("."),
-        help="Root directory containing the supypowers/ folder (default: current directory).",
+        help="Root directory containing the powers/ folder (default: current directory).",
     )
     run_p.add_argument(
         "--examples",
         action="store_true",
-        help="Run from bundled examples instead of local supypowers/ folder.",
+        help="Run from bundled examples instead of local powers/ folder.",
     )
     run_p.add_argument(
         "--secrets",
@@ -69,12 +70,12 @@ def app() -> None:
         "--root",
         type=Path,
         default=Path("."),
-        help="Root directory containing the supypowers/ folder (default: current directory).",
+        help="Root directory containing the powers/ folder (default: current directory).",
     )
     docs_p.add_argument(
         "--examples",
         action="store_true",
-        help="Document bundled examples instead of local supypowers/ folder.",
+        help="Document bundled examples instead of local powers/ folder.",
     )
     docs_p.add_argument("--recursive", action="store_true", help="Recurse into subfolders")
     docs_p.add_argument(
@@ -108,7 +109,7 @@ def app() -> None:
         "--root",
         type=Path,
         default=Path("."),
-        help="Root directory containing the supypowers/ folder (default: current directory).",
+        help="Root directory containing the powers/ folder (default: current directory).",
     )
     skills_p.add_argument(
         "--output",
@@ -132,11 +133,11 @@ def app() -> None:
         _cmd_new(args.root, args.name, force=bool(args.force))
         return
     if args.command == "run":
-        folder = _resolve_supypowers_folder(args.root, use_examples=args.examples)
+        folder = _resolve_powers_folder(args.root, use_examples=args.examples)
         _cmd_run(folder, args.target, args.input_data, args.secrets)
         return
     if args.command == "docs":
-        folder = _resolve_supypowers_folder(args.root, use_examples=args.examples)
+        folder = _resolve_powers_folder(args.root, use_examples=args.examples)
         _cmd_docs(
             folder,
             args.recursive,
@@ -147,20 +148,19 @@ def app() -> None:
         )
         return
     if args.command == "skills":
-        folder = _resolve_supypowers_folder(args.root, use_examples=False)
+        folder = _resolve_powers_folder(args.root, use_examples=False)
         _cmd_skills(folder, args.secrets, args.output)
         return
 
     parser.error("unknown command")
 
 
-def _resolve_supypowers_folder(root: Path, *, use_examples: bool) -> Path:
-    """Resolve the supypowers folder, either from bundled examples or local."""
+def _resolve_powers_folder(root: Path, *, use_examples: bool) -> Path:
+    """Resolve the powers folder, either from bundled examples or local."""
     if use_examples:
         # Use bundled examples directory (available when running from source)
-        # The examples/ folder contains a supypowers/ subfolder following the convention
         examples_root = Path(__file__).parent.parent.parent / "examples"
-        examples_dir = examples_root / SUPYPOWERS_FOLDER
+        examples_dir = examples_root / POWERS_FOLDER
         if not examples_dir.exists():
             print(
                 json.dumps(
@@ -172,7 +172,15 @@ def _resolve_supypowers_folder(root: Path, *, use_examples: bool) -> Path:
             )
             raise SystemExit(2)
         return examples_dir
-    return (root / SUPYPOWERS_FOLDER).resolve()
+    powers_dir = (root / POWERS_FOLDER).resolve()
+    if powers_dir.exists():
+        return powers_dir
+    # Fallback to legacy folder name
+    legacy_dir = (root / _LEGACY_FOLDER).resolve()
+    if legacy_dir.exists():
+        print(f"Warning: '{_LEGACY_FOLDER}/' is deprecated, rename to '{POWERS_FOLDER}/'", file=sys.stderr)
+        return legacy_dir
+    return powers_dir  # return expected path (will fail later with clear error)
 
 
 def _cmd_init(root: Path, *, force: bool) -> None:
@@ -180,7 +188,7 @@ def _cmd_init(root: Path, *, force: bool) -> None:
         print(json.dumps({"ok": False, "error": f"root directory not found: {root}"}))
         raise SystemExit(2)
 
-    sp_dir = (root / SUPYPOWERS_FOLDER).resolve()
+    sp_dir = (root / POWERS_FOLDER).resolve()
     sp_dir.mkdir(parents=True, exist_ok=True)
 
     hello_py = sp_dir / "hello.py"
@@ -214,13 +222,13 @@ def _cmd_init(root: Path, *, force: bool) -> None:
 
 
 def _cmd_new(root: Path, name: str, *, force: bool) -> None:
-    sp_dir = (root / SUPYPOWERS_FOLDER).resolve()
+    sp_dir = (root / POWERS_FOLDER).resolve()
     if not sp_dir.exists():
         print(
             json.dumps(
                 {
                     "ok": False,
-                    "error": f"supypowers/ folder not found at {sp_dir}",
+                    "error": f"powers/ folder not found at {sp_dir}",
                     "hint": "run 'supypowers init' first",
                 }
             )
@@ -313,9 +321,20 @@ def _cmd_run(folder: Path, target: str, input_data: str, secrets: list[str]) -> 
 
     try:
         parsed = json.loads(out)
-    except Exception:
-        print(json.dumps({"ok": False, "error": "runner did not emit valid JSON", "raw": out}))
-        raise SystemExit(1)
+    except json.JSONDecodeError:
+        # Defense in depth: try the last JSON-like line in case of stray stdout
+        # output that wasn't caught by the runner's stdout→stderr redirect
+        # (e.g. C extensions writing directly to fd 1).
+        parsed = None
+        for line in reversed(out.strip().splitlines()):
+            try:
+                parsed = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+        if parsed is None:
+            print(json.dumps({"ok": False, "error": "runner did not emit valid JSON", "raw": out}))
+            raise SystemExit(1)
 
     print(json.dumps(parsed, ensure_ascii=False))
     raise SystemExit(0 if parsed.get("ok") else 1)
@@ -587,7 +606,7 @@ def _generate_skills_markdown(functions: list[dict]) -> str:
     lines.append("supypowers new my_tool")
     lines.append("```")
     lines.append("")
-    lines.append("This creates `supypowers/my_tool.py` from a template. Edit it:")
+    lines.append("This creates `powers/my_tool.py` from a template. Edit it:")
     lines.append("")
     lines.append("```python")
     lines.append("# /// script")
@@ -938,7 +957,7 @@ description: How to create supypowers scripts. Use when you need to build a new 
 
 # Creating Supypowers Scripts
 
-Each supypowers script is a self-contained Python file in the `supypowers/` folder.
+Each supypowers script is a self-contained Python file in the `powers/` folder.
 Scripts are run via `supypowers run <script>:<function> '<json>'` and always return JSON.
 
 ## Quick Start
@@ -1049,6 +1068,29 @@ def process(input: ProcessInput) -> ProcessOutput:
         return ProcessOutput(success=False, error=str(e))
 ```
 
+### Media output (images, audio, etc.)
+
+Tools that generate media files SHOULD include a `_media` list in their output:
+
+```python
+class GenOutput(BaseModel):
+    success: bool
+    _media: list[dict] = Field(default_factory=list, description=\"Generated media files\")
+
+def generate(input: GenInput) -> GenOutput:
+    \"\"\"Generate an image.\"\"\"
+    path = Path(input.output_dir) / f\"{hash}.png\"
+    # ... generate file ...
+    return GenOutput(
+        success=True,
+        _media=[{\"path\": str(path.resolve()), \"type\": \"image\"}],
+    )
+```
+
+Each `_media` entry: `{\"path\": \"/absolute/path.png\", \"type\": \"image\"}`.
+Valid types: `image`, `audio`, `video`, `document`.
+All paths MUST be absolute. The tool MUST create `output_dir` if it doesn't exist.
+
 ## Troubleshooting
 
 | Error | Fix |
@@ -1086,6 +1128,9 @@ class {class_name}Output(BaseModel):
     success: bool = Field(..., description="Whether the operation succeeded")
     result: Optional[str] = Field(default=None, description="The result if successful")
     error: Optional[str] = Field(default=None, description="Error message if failed")
+    # For media-generating tools, include:
+    # _media: list[dict] = Field(default_factory=list, description="Generated media files")
+    # Each entry: {{"path": "/absolute/path.png", "type": "image"}}
 
 
 def {script_name}(input: {class_name}Input) -> {class_name}Output:
