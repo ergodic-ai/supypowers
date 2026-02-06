@@ -102,6 +102,32 @@ def app() -> None:
         help="Secrets as a .env path or inline KEY=VAL. May be provided multiple times.",
     )
 
+    test_p = sub.add_parser("test", help="Test a function with auto-generated example input or a fixture file")
+    test_p.add_argument("target", type=str, help="script:function to test")
+    test_p.add_argument(
+        "--root",
+        type=Path,
+        default=Path("."),
+        help="Root directory containing the powers/ folder (default: current directory).",
+    )
+    test_p.add_argument(
+        "--examples",
+        action="store_true",
+        help="Test from bundled examples instead of local powers/ folder.",
+    )
+    test_p.add_argument(
+        "--fixture",
+        type=Path,
+        default=None,
+        help="Path to a JSON file containing test input.",
+    )
+    test_p.add_argument(
+        "--secrets",
+        action="append",
+        default=[],
+        help="Secrets as a .env path or inline KEY=VAL.",
+    )
+
     skills_p = sub.add_parser(
         "skills", help="Generate a skills document for AI agents (what this is, available functions, how to use)"
     )
@@ -135,6 +161,10 @@ def app() -> None:
     if args.command == "run":
         folder = _resolve_powers_folder(args.root, use_examples=args.examples)
         _cmd_run(folder, args.target, args.input_data, args.secrets)
+        return
+    if args.command == "test":
+        folder = _resolve_powers_folder(args.root, use_examples=args.examples)
+        _cmd_test(folder, args.target, args.fixture, args.secrets)
         return
     if args.command == "docs":
         folder = _resolve_powers_folder(args.root, use_examples=args.examples)
@@ -338,6 +368,65 @@ def _cmd_run(folder: Path, target: str, input_data: str, secrets: list[str]) -> 
 
     print(json.dumps(parsed, ensure_ascii=False))
     raise SystemExit(0 if parsed.get("ok") else 1)
+
+
+def _cmd_test(folder: Path, target: str, fixture: Path | None, secrets: list[str]) -> None:
+    """Test a function by running it with fixture data or auto-generated example input."""
+    if not folder.exists() or not folder.is_dir():
+        print(json.dumps({"ok": False, "error": f"folder not found: {folder}"}))
+        raise SystemExit(2)
+
+    script_name, _, func_name = target.partition(":")
+    if not script_name or not func_name:
+        print(json.dumps({"ok": False, "error": "target must be in the form script:function"}))
+        raise SystemExit(2)
+
+    env = parse_secrets_args(secrets or [])
+
+    # Determine input data
+    if fixture:
+        if not fixture.exists():
+            print(json.dumps({"ok": False, "error": f"fixture file not found: {fixture}"}))
+            raise SystemExit(2)
+        input_data = fixture.read_text(encoding="utf-8").strip()
+    else:
+        # Auto-generate from schema by running docs first
+        script_path = resolve_script_path(folder, script_name)
+        payload = {"script_path": str(script_path), "require_marker": False}
+        try:
+            docs_out = uv_run_python_code(
+                script_path=script_path,
+                code=_DOCS_CODE,
+                payload=payload,
+                extra_env=env,
+            )
+            docs_data = json.loads(docs_out)
+            # Find the matching function
+            funcs = docs_data.get("functions", [])
+            matched = None
+            for fn in funcs:
+                if fn.get("name") == func_name:
+                    matched = fn
+                    break
+            if matched:
+                input_data = _schema_to_example_input(matched.get("input_schema"))
+            else:
+                available = [fn.get("name", "?") for fn in funcs]
+                print(json.dumps({
+                    "ok": False,
+                    "error": f"function '{func_name}' not found in {script_name}",
+                    "available": available,
+                }))
+                raise SystemExit(2)
+        except UVRunError:
+            # Fallback: empty input
+            input_data = "{}"
+
+    # Show what we're testing
+    print(f"Testing {target} with input: {input_data}", file=sys.stderr)
+
+    # Run the function
+    _cmd_run(folder, target, input_data, secrets)
 
 
 def _cmd_docs(
