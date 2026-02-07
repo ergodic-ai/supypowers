@@ -7,3 +7,4 @@ build/
 *.egg-info/
 .env
 build_and_deploy.sh
+live_testing*/

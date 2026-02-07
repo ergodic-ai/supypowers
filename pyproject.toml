@@ -1,6 +1,6 @@
 [project]
 name = "supypowers"
-version = "0.2.2"
+version = "0.3.6"
 description = "Run self-contained uv Python scripts as callable, schema-documented 'superpowers'."
 readme = "README.md"
 requires-python = ">=3.10"

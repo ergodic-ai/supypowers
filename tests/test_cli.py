@@ -132,6 +132,31 @@ class TestCLI(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertEqual(out["data"], "hi")
 
+    def test_test_auto_generates_input(self) -> None:
+        proc = _run_uv_superpowers_raw(
+            "test", "--examples", "exponents:compute_sqrt"
+        )
+        self.assertEqual(proc.returncode, 0)
+        last_line = proc.stdout.strip().splitlines()[-1]
+        out = json.loads(last_line)
+        self.assertTrue(out["ok"])
+
+    def test_test_with_fixture(self) -> None:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write('{"x": 25}')
+            f.flush()
+            try:
+                proc = _run_uv_superpowers_raw(
+                    "test", "--examples", "exponents:compute_sqrt", "--fixture", f.name
+                )
+                self.assertEqual(proc.returncode, 0)
+                last_line = proc.stdout.strip().splitlines()[-1]
+                out = json.loads(last_line)
+                self.assertTrue(out["ok"])
+                self.assertEqual(out["data"]["result"], 5.0)
+            finally:
+                os.unlink(f.name)
+
 
 class TestCLIErrors(unittest.TestCase):
     """Tests for error paths in CLI commands."""
@@ -146,6 +171,17 @@ class TestCLIErrors(unittest.TestCase):
     def test_run_nonexistent_script(self) -> None:
         proc = _run_uv_superpowers_raw("run", "--examples", "nonexistent:func", "{}")
         self.assertNotEqual(proc.returncode, 0)
+        out = json.loads(proc.stdout.strip())
+        self.assertFalse(out["ok"])
+        self.assertIn("Script not found", out["error"])
+
+    def test_test_nonexistent_script_returns_json(self) -> None:
+        """'test' with nonexistent script should return JSON, not a traceback."""
+        proc = _run_uv_superpowers_raw("test", "--examples", "nonexistent:func")
+        self.assertNotEqual(proc.returncode, 0)
+        out = json.loads(proc.stdout.strip())
+        self.assertFalse(out["ok"])
+        self.assertIn("Script not found", out["error"])
 
     def test_run_nonexistent_function(self) -> None:
         proc = _run_uv_superpowers_raw(
@@ -259,22 +295,27 @@ class TestSkills(unittest.TestCase):
 class TestLegacyFolderFallback(unittest.TestCase):
     """Tests for backward-compat supypowers/ -> powers/ fallback."""
 
+    _LEGACY_SCRIPT = (
+        '# /// script\n# dependencies = ["pydantic"]\n# ///\n'
+        'from pydantic import BaseModel, Field\n'
+        'class HiInput(BaseModel):\n'
+        '    name: str = Field(...)\n'
+        'class HiOutput(BaseModel):\n'
+        '    greeting: str = Field(...)\n'
+        'def hello(input: HiInput) -> HiOutput:\n'
+        '    """Say hi."""\n'
+        '    return HiOutput(greeting=f"Hi {input.name}")\n'
+    )
+
+    def _make_legacy_dir(self, tmp: str) -> Path:
+        legacy_dir = Path(tmp) / "supypowers"
+        legacy_dir.mkdir()
+        (legacy_dir / "hello.py").write_text(self._LEGACY_SCRIPT)
+        return legacy_dir
+
     def test_legacy_folder_fallback_with_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            # Create a supypowers/ folder (legacy name) with a valid script
-            legacy_dir = Path(tmp) / "supypowers"
-            legacy_dir.mkdir()
-            (legacy_dir / "hello.py").write_text(
-                '# /// script\n# dependencies = ["pydantic"]\n# ///\n'
-                'from pydantic import BaseModel, Field\n'
-                'class HiInput(BaseModel):\n'
-                '    name: str = Field(...)\n'
-                'class HiOutput(BaseModel):\n'
-                '    greeting: str = Field(...)\n'
-                'def hello(input: HiInput) -> HiOutput:\n'
-                '    """Say hi."""\n'
-                '    return HiOutput(greeting=f"Hi {input.name}")\n'
-            )
+            self._make_legacy_dir(tmp)
             # Run against the legacy folder — should work with deprecation warning
             proc = _run_uv_superpowers_raw(
                 "run", "--root", tmp, "hello:hello", '{"name": "World"}'
@@ -284,6 +325,83 @@ class TestLegacyFolderFallback(unittest.TestCase):
             self.assertTrue(out["ok"])
             self.assertEqual(out["data"]["greeting"], "Hi World")
             self.assertIn("deprecated", proc.stderr)
+
+    def test_legacy_folder_new_command(self) -> None:
+        """'new' should work when only supypowers/ exists (legacy fallback)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_legacy_dir(tmp)
+            proc = _run_uv_superpowers_raw("new", "my_tool", "--root", tmp)
+            self.assertEqual(proc.returncode, 0)
+            out = json.loads(proc.stdout.strip())
+            self.assertTrue(out["ok"])
+            self.assertTrue((Path(tmp) / "supypowers" / "my_tool.py").exists())
+            self.assertIn("deprecated", proc.stderr)
+
+    def test_legacy_folder_docs_command(self) -> None:
+        """'docs' should work when only supypowers/ exists (legacy fallback)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_legacy_dir(tmp)
+            proc = _run_uv_superpowers_raw("docs", "--root", tmp, "--format", "json")
+            self.assertEqual(proc.returncode, 0)
+            docs = json.loads(proc.stdout.strip())
+            self.assertIsInstance(docs, list)
+            self.assertTrue(len(docs) > 0)
+            fn_names = {fn["name"] for fn in docs[0].get("functions", [])}
+            self.assertIn("hello", fn_names)
+            self.assertIn("deprecated", proc.stderr)
+
+    def test_legacy_folder_test_command(self) -> None:
+        """'test' should work when only supypowers/ exists (legacy fallback)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_legacy_dir(tmp)
+            proc = _run_uv_superpowers_raw(
+                "test", "--root", tmp, "hello:hello"
+            )
+            self.assertEqual(proc.returncode, 0)
+            # stdout has the JSON result on the last line
+            last_line = proc.stdout.strip().splitlines()[-1]
+            out = json.loads(last_line)
+            self.assertTrue(out["ok"])
+            self.assertIn("deprecated", proc.stderr)
+
+    def test_legacy_folder_skills_command(self) -> None:
+        """'skills' should work when only supypowers/ exists (legacy fallback)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_legacy_dir(tmp)
+            proc = _run_uv_superpowers_raw("skills", "--root", tmp)
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn("name: supypowers", proc.stdout)
+            self.assertIn("hello:hello", proc.stdout)
+            self.assertIn("deprecated", proc.stderr)
+
+    def test_powers_folder_preferred_over_legacy(self) -> None:
+        """When both powers/ and supypowers/ exist, powers/ takes precedence."""
+        with tempfile.TemporaryDirectory() as tmp:
+            # Create both folders with different scripts
+            self._make_legacy_dir(tmp)
+            powers_dir = Path(tmp) / "powers"
+            powers_dir.mkdir()
+            (powers_dir / "hello.py").write_text(
+                '# /// script\n# dependencies = ["pydantic"]\n# ///\n'
+                'from pydantic import BaseModel, Field\n'
+                'class HiInput(BaseModel):\n'
+                '    name: str = Field(...)\n'
+                'class HiOutput(BaseModel):\n'
+                '    greeting: str = Field(...)\n'
+                'def hello(input: HiInput) -> HiOutput:\n'
+                '    """Say hi."""\n'
+                '    return HiOutput(greeting=f"MODERN {input.name}")\n'
+            )
+            proc = _run_uv_superpowers_raw(
+                "run", "--root", tmp, "hello:hello", '{"name": "World"}'
+            )
+            self.assertEqual(proc.returncode, 0)
+            out = json.loads(proc.stdout.strip())
+            self.assertTrue(out["ok"])
+            # Should use powers/ (modern), not supypowers/ (legacy)
+            self.assertEqual(out["data"]["greeting"], "MODERN World")
+            # No deprecation warning since powers/ was found
+            self.assertNotIn("deprecated", proc.stderr)
 
 
 class TestUtilUnit(unittest.TestCase):

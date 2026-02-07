@@ -252,7 +252,7 @@ def _cmd_init(root: Path, *, force: bool) -> None:
 
 
 def _cmd_new(root: Path, name: str, *, force: bool) -> None:
-    sp_dir = (root / POWERS_FOLDER).resolve()
+    sp_dir = _resolve_powers_folder(root, use_examples=False)
     if not sp_dir.exists():
         print(
             json.dumps(
@@ -317,7 +317,11 @@ def _cmd_run(folder: Path, target: str, input_data: str, secrets: list[str]) -> 
         print(json.dumps({"ok": False, "error": "target must be in the form script:function"}))
         raise SystemExit(2)
 
-    script_path = resolve_script_path(folder, script_name)
+    try:
+        script_path = resolve_script_path(folder, script_name)
+    except FileNotFoundError as e:
+        print(json.dumps({"ok": False, "error": str(e)}))
+        raise SystemExit(2)
     env = parse_secrets_args(secrets or [])
 
     payload = {
@@ -391,7 +395,11 @@ def _cmd_test(folder: Path, target: str, fixture: Path | None, secrets: list[str
         input_data = fixture.read_text(encoding="utf-8").strip()
     else:
         # Auto-generate from schema by running docs first
-        script_path = resolve_script_path(folder, script_name)
+        try:
+            script_path = resolve_script_path(folder, script_name)
+        except FileNotFoundError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            raise SystemExit(2)
         payload = {"script_path": str(script_path), "require_marker": False}
         try:
             docs_out = uv_run_python_code(
