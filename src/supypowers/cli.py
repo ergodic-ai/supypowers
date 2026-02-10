@@ -46,7 +46,7 @@ def app() -> None:
 
     run_p = sub.add_parser("run", help="Run a function in a script via `uv run`")
     run_p.add_argument("target", type=str, help="script:function (script may omit .py)")
-    run_p.add_argument("input_data", type=str, help="Input data (JSON or Python-literal-ish)")
+    run_p.add_argument("input_data", type=str, nargs="?", default="{}", help="Input data (JSON or Python-literal-ish). Optional for no-input functions.")
     run_p.add_argument(
         "--root",
         type=Path,
@@ -129,7 +129,7 @@ def app() -> None:
     )
 
     skills_p = sub.add_parser(
-        "skills", help="Generate a skills document for AI agents (what this is, available functions, how to use)"
+        "skills", help="Generate skill files for AI agents (one per script in powers/)"
     )
     skills_p.add_argument(
         "--root",
@@ -141,7 +141,12 @@ def app() -> None:
         "--output",
         type=Path,
         default=None,
-        help="Write output to a file instead of stdout.",
+        help="Output directory for skill files (default: .claude/skills/).",
+    )
+    skills_p.add_argument(
+        "--stdout",
+        action="store_true",
+        help="Print all skill content to stdout instead of writing files.",
     )
     skills_p.add_argument(
         "--secrets",
@@ -179,7 +184,7 @@ def app() -> None:
         return
     if args.command == "skills":
         folder = _resolve_powers_folder(args.root, use_examples=False)
-        _cmd_skills(folder, args.secrets, args.output)
+        _cmd_skills(folder, args.secrets, args.output, args.stdout)
         return
 
     parser.error("unknown command")
@@ -560,12 +565,17 @@ def _docs_to_markdown(docs_out: list[dict]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _cmd_skills(folder: Path, secrets: list[str], output_path: Path | None) -> None:
-    """Generate a comprehensive skills document for AI agents."""
+_SUPYPOWER_SKILL_PREFIX = "supypower-"
+
+
+def _cmd_skills(folder: Path, secrets: list[str], output_path: Path | None, stdout: bool) -> None:
+    """Generate per-script skill files for AI agents."""
+    import shutil
+
     env = parse_secrets_args(secrets or [])
 
-    # Gather function docs
-    functions_info: list[dict] = []
+    # Gather function docs grouped by script
+    scripts_info: dict[str, list[dict]] = {}
     if folder.exists() and folder.is_dir():
         scripts = sorted(p for p in folder.glob("*.py") if p.is_file())
         for script_path in scripts:
@@ -580,7 +590,7 @@ def _cmd_skills(folder: Path, secrets: list[str], output_path: Path | None) -> N
                 doc = json.loads(out)
                 script_name = script_path.stem
                 for fn in doc.get("functions", []):
-                    functions_info.append(
+                    scripts_info.setdefault(script_name, []).append(
                         {
                             "script": script_name,
                             "name": fn.get("name", ""),
@@ -592,172 +602,134 @@ def _cmd_skills(folder: Path, secrets: list[str], output_path: Path | None) -> N
             except Exception:
                 pass  # Skip scripts that fail to load
 
-    rendered = _generate_skills_markdown(functions_info)
+    # Generate per-script skill files
+    skill_files: dict[str, str] = {}
+    for script_name in sorted(scripts_info.keys()):
+        functions = scripts_info[script_name]
+        dir_name = f"{_SUPYPOWER_SKILL_PREFIX}{script_name}"
+        skill_files[dir_name] = _generate_skill_md(script_name, functions)
 
-    if output_path is not None:
-        output_path.write_text(rendered, encoding="utf-8")
-        print(json.dumps({"ok": True, "written_to": str(output_path)}))
-    else:
-        print(rendered)
+    if stdout:
+        print("\n".join(skill_files.values()))
+        return
+
+    output_dir = Path(output_path) if output_path else Path(".claude/skills")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clean up stale managed skill directories and legacy files
+    for existing in output_dir.iterdir():
+        if existing.is_dir() and existing.name.startswith(_SUPYPOWER_SKILL_PREFIX):
+            shutil.rmtree(existing)
+        elif existing.is_file() and existing.name in ("supypowers.md", "SKILL.md"):
+            # Clean up legacy single-file outputs
+            existing.unlink()
+
+    # Write new skill directories
+    for dir_name, content in skill_files.items():
+        skill_dir = output_dir / dir_name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+
+    print(json.dumps({
+        "ok": True,
+        "skills": len(skill_files),
+        "functions": sum(len(fns) for fns in scripts_info.values()),
+        "output_dir": str(output_dir),
+    }))
+
+    import sys as _sys
+    _sys.stderr.write(
+        f"Generated {len(skill_files)} skills "
+        f"({sum(len(fns) for fns in scripts_info.values())} functions) "
+        f"in {output_dir}\n"
+    )
+    for dir_name in sorted(skill_files.keys()):
+        _sys.stderr.write(f"  {dir_name}/SKILL.md\n")
+
+
+def _generate_skill_md(script_name: str, functions: list[dict]) -> str:
+    """Generate a SKILL.md for a single script following the Agent Skills format."""
+    lines: list[str] = []
+
+    # Build description from function actions
+    func_names = [f"{fn['script']}:{fn['name']}" for fn in functions]
+    actions = []
+    for fn in functions:
+        desc = fn.get("description", "").strip()
+        if desc:
+            first_sentence = desc.split(".")[0].strip().lower()
+            if first_sentence and first_sentence not in actions:
+                actions.append(first_sentence)
+
+    display_name = script_name.replace("_", " ").title()
+    action_list = ", ".join(actions[:4]) if actions else ", ".join(func_names)
+
+    lines.append("---")
+    lines.append(f"name: supypower-{script_name}")
+    lines.append("description: >-")
+    lines.append(
+        f"  Run {display_name} functions via supypowers CLI. "
+        f"Available: {action_list}. "
+        f"Use when the user needs {display_name.lower()} functionality."
+    )
+    lines.append("---")
+    lines.append("")
+
+    lines.append(f"# {display_name}")
+    lines.append("")
+    lines.append("Execute tools: `supypowers run <script>:<function> '<json>'`")
+    lines.append("")
+    lines.append(
+        'Output: `{"ok": true, "data": ...}` on success, '
+        '`{"ok": false, "error": "..."}` on failure.'
+    )
+    lines.append("")
+
+    for fn in functions:
+        script = fn["script"]
+        name = fn["name"]
+        desc = fn.get("description", "").strip()
+        in_schema = fn.get("input_schema")
+
+        lines.append(f"### {script}:{name}")
+        lines.append("")
+        if desc:
+            lines.append(desc)
+            lines.append("")
+
+        # Example invocation
+        example_input = _schema_to_example_input(in_schema)
+        lines.append("```bash")
+        lines.append(f"supypowers run {script}:{name} '{example_input}'")
+        lines.append("```")
+        lines.append("")
+
+        # Input field table
+        if in_schema:
+            props = in_schema.get("properties", {})
+            required = set(in_schema.get("required", []))
+            if props:
+                lines.append("| Field | Type | Required | Description |")
+                lines.append("|-------|------|----------|-------------|")
+                for field_name, field_info in props.items():
+                    field_type = field_info.get("type", "any")
+                    field_desc = field_info.get("description", "")
+                    is_req = "yes" if field_name in required else "no"
+                    lines.append(f"| `{field_name}` | {field_type} | {is_req} | {field_desc} |")
+                lines.append("")
+
+    return "\n".join(lines)
 
 
 def _generate_skills_markdown(functions: list[dict]) -> str:
-    """Generate a SKILL.md document following the Agent Skills format.
-
-    Output has YAML frontmatter (name + description) followed by structured
-    instructions that an AI agent can load progressively.
-    """
-    lines: list[str] = []
-
-    # --- YAML frontmatter (Level 1: metadata — always loaded) ---------------
-    func_names = [f"{fn['script']}:{fn['name']}" for fn in functions]
-    if func_names:
-        desc_suffix = " Available functions: " + ", ".join(func_names) + "."
-    else:
-        desc_suffix = ""
-    lines.append("---")
-    lines.append("name: supypowers")
-    lines.append(
-        "description: Run Python functions as tools via the supypowers CLI."
-        " Use when you need to call any of the available supypower functions."
-        + desc_suffix
-    )
-    lines.append("---")
-    lines.append("")
-
-    # --- Body (Level 2: instructions — loaded when triggered) ----------------
-    lines.append("# Supypowers")
-    lines.append("")
-    lines.append(
-        "Supypowers lets you run self-contained Python functions as tools."
-        " Each function takes JSON input, returns JSON output, and manages"
-        " its own dependencies — no environment setup required."
-    )
-    lines.append("")
-
-    # Quick start
-    lines.append("## Quick Start")
-    lines.append("")
-    lines.append("```bash")
-    lines.append("# Run a function")
-    lines.append("supypowers run <script>:<function> '<json_input>'")
-    lines.append("")
-    lines.append("# List available functions and schemas")
-    lines.append("supypowers skills")
-    lines.append("")
-    lines.append("# Get full JSON schemas (for programmatic use)")
-    lines.append("supypowers docs --format json")
-    lines.append("")
-    lines.append("# Create a new function")
-    lines.append("supypowers new <name>")
-    lines.append("```")
-    lines.append("")
-    lines.append("**Output format:** Always JSON — `{\"ok\": true, \"data\": ...}` or `{\"ok\": false, \"error\": \"...\"}`")
-    lines.append("")
-
-    # Available functions
-    lines.append("## Available Functions")
-    lines.append("")
-
-    if not functions:
-        lines.append("_No functions available yet. Create one with `supypowers new <name>`._")
-        lines.append("")
-    else:
-        for fn in functions:
-            script = fn["script"]
-            name = fn["name"]
-            desc = fn.get("description", "").strip()
-            in_schema = fn.get("input_schema")
-
-            lines.append(f"### `{script}:{name}`")
-            lines.append("")
-            if desc:
-                lines.append(desc)
-                lines.append("")
-
-            # Example invocation
-            example_input = _schema_to_example_input(in_schema)
-            lines.append("```bash")
-            lines.append(f"supypowers run {script}:{name} '{example_input}'")
-            lines.append("```")
-            lines.append("")
-
-            # Input field table
-            if in_schema:
-                props = in_schema.get("properties", {})
-                required = set(in_schema.get("required", []))
-                if props:
-                    lines.append("| Field | Type | Required | Description |")
-                    lines.append("|-------|------|----------|-------------|")
-                    for field_name, field_info in props.items():
-                        field_type = field_info.get("type", "any")
-                        field_desc = field_info.get("description", "")
-                        is_req = "✓" if field_name in required else ""
-                        lines.append(f"| `{field_name}` | {field_type} | {is_req} | {field_desc} |")
-                    lines.append("")
-
-    # Creating new functions
-    lines.append("## Creating New Functions")
-    lines.append("")
-    lines.append("```bash")
-    lines.append("supypowers new my_tool")
-    lines.append("```")
-    lines.append("")
-    lines.append("This creates `powers/my_tool.py` from a template. Edit it:")
-    lines.append("")
-    lines.append("```python")
-    lines.append("# /// script")
-    lines.append("# dependencies = [\"pydantic\"]")
-    lines.append("# ///")
-    lines.append("from pydantic import BaseModel, Field")
-    lines.append("")
-    lines.append("class MyToolInput(BaseModel):")
-    lines.append("    value: str = Field(..., description=\"Input value\")")
-    lines.append("")
-    lines.append("class MyToolOutput(BaseModel):")
-    lines.append("    success: bool")
-    lines.append("    result: str | None = None")
-    lines.append("    error: str | None = None")
-    lines.append("")
-    lines.append("def my_tool(input: MyToolInput) -> MyToolOutput:")
-    lines.append('    """Describe what this function does."""')
-    lines.append("    try:")
-    lines.append("        return MyToolOutput(success=True, result=f\"Got: {input.value}\")")
-    lines.append("    except Exception as e:")
-    lines.append("        return MyToolOutput(success=False, error=str(e))")
-    lines.append("```")
-    lines.append("")
-    lines.append("Then test:")
-    lines.append("```bash")
-    lines.append("supypowers run my_tool:my_tool '{\"value\": \"test\"}'")
-    lines.append("```")
-    lines.append("")
-
-    # Rules
-    lines.append("## Rules")
-    lines.append("")
-    lines.append("| # | Rule |")
-    lines.append("|---|------|")
-    lines.append("| 1 | Function must have exactly **one** parameter named `input` |")
-    lines.append("| 2 | `input` must be typed as a Pydantic `BaseModel` |")
-    lines.append("| 3 | Declare all dependencies in the `# /// script` block |")
-    lines.append("| 4 | **No `print()`** — it breaks JSON output |")
-    lines.append("| 5 | **No `input()`** — there is no interactive terminal |")
-    lines.append("| 6 | Return errors in output; don't raise exceptions |")
-    lines.append("")
-
-    # Secrets
-    lines.append("## Secrets")
-    lines.append("")
-    lines.append("```bash")
-    lines.append("supypowers run my_script:my_func '{}' --secrets API_KEY=sk-xxx")
-    lines.append("supypowers run my_script:my_func '{}' --secrets .env")
-    lines.append("```")
-    lines.append("")
-    lines.append("Access in code: `api_key = os.environ.get(\"API_KEY\")`")
-    lines.append("")
-
-    return "\n".join(lines)
+    """Generate combined skills markdown. Backwards-compat wrapper for --stdout."""
+    scripts_info: dict[str, list[dict]] = {}
+    for fn in functions:
+        scripts_info.setdefault(fn["script"], []).append(fn)
+    parts = []
+    for script_name in sorted(scripts_info.keys()):
+        parts.append(_generate_skill_md(script_name, scripts_info[script_name]))
+    return "\n".join(parts)
 
 
 def _schema_to_example_input(schema: dict | None) -> str:
@@ -874,28 +846,30 @@ def main():
 
     sig = inspect.signature(fn)
     params = list(sig.parameters.values())
-    if len(params) != 1:
-        _emit({"ok": False, "error": "function must accept exactly one parameter named `input`"})
-        return 2
-
-    param = params[0]
-    if param.name != "input":
-        _emit({"ok": False, "error": "function parameter must be named `input`"})
-        return 2
-
-    hints = _resolved_type_hints(fn, mod)
-    ann = hints.get(param.name, param.annotation)
-    raw = _parse_input(input_data)
 
     try:
-        if not _is_pydantic_model(ann):
-            _emit({"ok": False, "error": "input must be a Pydantic BaseModel type annotation"})
+        if len(params) == 0:
+            # No-input function — call directly
+            result = fn()
+        elif len(params) == 1 and params[0].name == "input":
+            # Standard supypower: one `input` param with Pydantic model
+            param = params[0]
+            hints = _resolved_type_hints(fn, mod)
+            ann = hints.get(param.name, param.annotation)
+            raw = _parse_input(input_data)
+
+            if not _is_pydantic_model(ann):
+                _emit({"ok": False, "error": "input must be a Pydantic BaseModel type annotation"})
+                return 2
+            if not isinstance(raw, dict):
+                _emit({"ok": False, "error": "input_data must be an object mapping for the input model"})
+                return 2
+            inp = ann.model_validate(raw) if hasattr(ann, "model_validate") else ann.parse_obj(raw)
+            result = fn(inp)
+        else:
+            _emit({"ok": False, "error": "function must have zero parameters or exactly one parameter named `input`"})
             return 2
-        if not isinstance(raw, dict):
-            _emit({"ok": False, "error": "input_data must be an object mapping for the input model"})
-            return 2
-        inp = ann.model_validate(raw) if hasattr(ann, "model_validate") else ann.parse_obj(raw)
-        result = fn(inp)
+
         out = _model_to_jsonable(result)
         try:
             json.dumps(out)
@@ -981,24 +955,33 @@ def main():
         except Exception:
             continue
         params = list(sig.parameters.values())
-        if len(params) != 1:
-            continue
-        if params[0].name != "input":
-            continue
-        hints = _resolved_type_hints(obj, mod)
-        ann_in = hints.get(params[0].name, params[0].annotation)
-        if require_marker and not _has_superpower_decorator(script_path, name):
-            continue
-        if not _is_pydantic_model(ann_in):
-            continue
 
-        ann_out = hints.get("return", sig.return_annotation)
-        fns.append({
-            "name": name,
-            "description": inspect.getdoc(obj) or "",
-            "input_schema": _schema_for_model(ann_in) if _is_pydantic_model(ann_in) else None,
-            "output_schema": _schema_for_model(ann_out) if _is_pydantic_model(ann_out) else None,
-        })
+        # Accept zero-param functions or one-param functions with `input` as Pydantic model
+        if len(params) == 0:
+            if require_marker and not _has_superpower_decorator(script_path, name):
+                continue
+            hints = _resolved_type_hints(obj, mod)
+            ann_out = hints.get("return", sig.return_annotation)
+            fns.append({
+                "name": name,
+                "description": inspect.getdoc(obj) or "",
+                "input_schema": None,
+                "output_schema": _schema_for_model(ann_out) if _is_pydantic_model(ann_out) else None,
+            })
+        elif len(params) == 1 and params[0].name == "input":
+            hints = _resolved_type_hints(obj, mod)
+            ann_in = hints.get(params[0].name, params[0].annotation)
+            if require_marker and not _has_superpower_decorator(script_path, name):
+                continue
+            if not _is_pydantic_model(ann_in):
+                continue
+            ann_out = hints.get("return", sig.return_annotation)
+            fns.append({
+                "name": name,
+                "description": inspect.getdoc(obj) or "",
+                "input_schema": _schema_for_model(ann_in) if _is_pydantic_model(ann_in) else None,
+                "output_schema": _schema_for_model(ann_out) if _is_pydantic_model(ann_out) else None,
+            })
 
     print(json.dumps({"script": script_path, "functions": fns}, ensure_ascii=False))
     return 0

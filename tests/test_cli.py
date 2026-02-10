@@ -270,26 +270,83 @@ class TestNew(unittest.TestCase):
 class TestSkills(unittest.TestCase):
     """Tests for the 'skills' command."""
 
-    def test_skills_examples(self) -> None:
+    def test_skills_stdout(self) -> None:
         # skills doesn't support --examples, so test with an init'd folder
         with tempfile.TemporaryDirectory() as tmp:
             _run_uv_superpowers("init", "--root", tmp, "--force")
-            proc = _run_uv_superpowers_raw("skills", "--root", tmp)
+            proc = _run_uv_superpowers_raw("skills", "--root", tmp, "--stdout")
             self.assertEqual(proc.returncode, 0)
             out = proc.stdout
             self.assertIn("---", out)
-            self.assertIn("name: supypowers", out)
-            self.assertIn("# Supypowers", out)
+            self.assertIn("name: supypower-", out)
 
-    def test_skills_output_to_file(self) -> None:
+    def test_skills_output_to_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             _run_uv_superpowers("init", "--root", tmp, "--force")
-            outfile = Path(tmp) / "SKILL.md"
-            out = _run_uv_superpowers("skills", "--root", tmp, "--output", str(outfile))
+            outdir = Path(tmp) / "skills"
+            out = _run_uv_superpowers("skills", "--root", tmp, "--output", str(outdir))
             self.assertTrue(out["ok"])
-            self.assertTrue(outfile.exists())
-            content = outfile.read_text()
-            self.assertIn("name: supypowers", content)
+            self.assertGreater(out["skills"], 0)
+            # Check that subdirectories with SKILL.md were created
+            skill_dirs = [d for d in outdir.iterdir() if d.is_dir() and d.name.startswith("supypower-")]
+            self.assertGreater(len(skill_dirs), 0)
+            for skill_dir in skill_dirs:
+                skill_file = skill_dir / "SKILL.md"
+                self.assertTrue(skill_file.exists())
+                content = skill_file.read_text()
+                self.assertIn("name: supypower-", content)
+                self.assertIn("supypowers run", content)
+
+
+class TestNoInputFunctions(unittest.TestCase):
+    """Tests for functions that take zero parameters."""
+
+    _NO_INPUT_SCRIPT = '''\
+# /// script
+# dependencies = ["pydantic"]
+# ///
+from pydantic import BaseModel, Field
+
+class TimeOutput(BaseModel):
+    value: str = Field(..., description="A fixed value")
+
+def get_value() -> TimeOutput:
+    """Return a fixed value."""
+    return TimeOutput(value="hello")
+'''
+
+    def test_run_no_input_function(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            powers = Path(tmp) / "powers"
+            powers.mkdir()
+            (powers / "noargs.py").write_text(self._NO_INPUT_SCRIPT)
+            out = _run_uv_superpowers("run", "noargs:get_value", "--root", tmp)
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["data"]["value"], "hello")
+
+    def test_run_no_input_with_empty_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            powers = Path(tmp) / "powers"
+            powers.mkdir()
+            (powers / "noargs.py").write_text(self._NO_INPUT_SCRIPT)
+            out = _run_uv_superpowers("run", "noargs:get_value", "{}", "--root", tmp)
+            self.assertTrue(out["ok"])
+            self.assertEqual(out["data"]["value"], "hello")
+
+    def test_docs_discovers_no_input_function(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            powers = Path(tmp) / "powers"
+            powers.mkdir()
+            (powers / "noargs.py").write_text(self._NO_INPUT_SCRIPT)
+            proc = _run_uv_superpowers_raw("docs", "--root", tmp, "--format", "json")
+            self.assertEqual(proc.returncode, 0)
+            docs = json.loads(proc.stdout)
+            self.assertEqual(len(docs), 1)
+            fns = docs[0]["functions"]
+            self.assertEqual(len(fns), 1)
+            self.assertEqual(fns[0]["name"], "get_value")
+            self.assertIsNone(fns[0]["input_schema"])
+            self.assertIsNotNone(fns[0]["output_schema"])
 
 
 class TestLegacyFolderFallback(unittest.TestCase):
@@ -368,9 +425,9 @@ class TestLegacyFolderFallback(unittest.TestCase):
         """'skills' should work when only supypowers/ exists (legacy fallback)."""
         with tempfile.TemporaryDirectory() as tmp:
             self._make_legacy_dir(tmp)
-            proc = _run_uv_superpowers_raw("skills", "--root", tmp)
+            proc = _run_uv_superpowers_raw("skills", "--root", tmp, "--stdout")
             self.assertEqual(proc.returncode, 0)
-            self.assertIn("name: supypowers", proc.stdout)
+            self.assertIn("name: supypower-hello", proc.stdout)
             self.assertIn("hello:hello", proc.stdout)
             self.assertIn("deprecated", proc.stderr)
 
