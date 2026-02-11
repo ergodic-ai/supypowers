@@ -562,6 +562,104 @@ class TestScriptMetadataUnit(unittest.TestCase):
         self.assertEqual(deps, [])
 
 
+class TestSkillsFolderDetection(unittest.TestCase):
+    """Tests for multi-folder AI tool detection in skills command."""
+
+    def test_detect_single_folder(self) -> None:
+        from supypowers.cli import detect_ai_tool_folders
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / ".claude").mkdir()
+            detected = detect_ai_tool_folders(Path(tmp))
+            self.assertEqual(len(detected), 1)
+            self.assertEqual(detected[0]["name"], "Claude Code")
+
+    def test_detect_multiple_folders(self) -> None:
+        from supypowers.cli import detect_ai_tool_folders
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / ".claude").mkdir()
+            (Path(tmp) / ".cursor").mkdir()
+            detected = detect_ai_tool_folders(Path(tmp))
+            self.assertEqual(len(detected), 2)
+            names = {e["name"] for e in detected}
+            self.assertEqual(names, {"Claude Code", "Cursor"})
+
+    def test_detect_no_folders(self) -> None:
+        from supypowers.cli import detect_ai_tool_folders
+
+        with tempfile.TemporaryDirectory() as tmp:
+            detected = detect_ai_tool_folders(Path(tmp))
+            self.assertEqual(len(detected), 0)
+
+    def test_detect_all_supported_folders(self) -> None:
+        from supypowers.cli import detect_ai_tool_folders
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for folder in [".claude", ".cursor", ".agents", ".copilot", ".windsurf"]:
+                (Path(tmp) / folder).mkdir()
+            detected = detect_ai_tool_folders(Path(tmp))
+            self.assertEqual(len(detected), 5)
+
+    def test_skills_all_flag_writes_to_multiple(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            (Path(tmp) / ".claude").mkdir()
+            (Path(tmp) / ".cursor").mkdir()
+            out = _run_uv_superpowers("skills", "--root", tmp, "--all")
+            self.assertTrue(out["ok"])
+            claude_dir = Path(tmp) / ".claude" / "skills"
+            cursor_dir = Path(tmp) / ".cursor" / "skills"
+            self.assertTrue(claude_dir.exists())
+            self.assertTrue(cursor_dir.exists())
+            claude_skills = [d for d in claude_dir.iterdir() if d.is_dir()]
+            cursor_skills = [d for d in cursor_dir.iterdir() if d.is_dir()]
+            self.assertGreater(len(claude_skills), 0)
+            self.assertEqual(len(claude_skills), len(cursor_skills))
+            # Check output_dirs field in JSON
+            self.assertIn("output_dirs", out)
+            self.assertEqual(len(out["output_dirs"]), 2)
+
+    def test_skills_all_flag_no_folders_defaults_to_claude(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            out = _run_uv_superpowers("skills", "--root", tmp, "--all")
+            self.assertTrue(out["ok"])
+            self.assertTrue((Path(tmp) / ".claude" / "skills").exists())
+
+    def test_skills_output_overrides_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            (Path(tmp) / ".claude").mkdir()
+            (Path(tmp) / ".cursor").mkdir()
+            outdir = Path(tmp) / "custom_output"
+            out = _run_uv_superpowers("skills", "--root", tmp, "--output", str(outdir))
+            self.assertTrue(out["ok"])
+            self.assertTrue(outdir.exists())
+            # .cursor/skills should NOT have been created
+            self.assertFalse((Path(tmp) / ".cursor" / "skills").exists())
+
+    def test_skills_stdout_skips_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            (Path(tmp) / ".claude").mkdir()
+            proc = _run_uv_superpowers_raw("skills", "--root", tmp, "--stdout")
+            self.assertEqual(proc.returncode, 0)
+            # No skills dirs should have been created
+            self.assertFalse((Path(tmp) / ".claude" / "skills").exists())
+
+    def test_skills_backward_compat_output_dir_field(self) -> None:
+        """JSON output includes both output_dir (backward compat) and output_dirs."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _run_uv_superpowers("init", "--root", tmp, "--force")
+            (Path(tmp) / ".claude").mkdir()
+            out = _run_uv_superpowers("skills", "--root", tmp, "--all")
+            self.assertIn("output_dir", out)
+            self.assertIn("output_dirs", out)
+            self.assertIsInstance(out["output_dir"], str)
+            self.assertIsInstance(out["output_dirs"], list)
+
+
 class TestToClassName(unittest.TestCase):
     """Unit tests for _to_class_name helper."""
 

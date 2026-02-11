@@ -149,6 +149,12 @@ def app() -> None:
         help="Print all skill content to stdout instead of writing files.",
     )
     skills_p.add_argument(
+        "--all",
+        dest="select_all",
+        action="store_true",
+        help="Write skills to all detected AI tool folders without prompting.",
+    )
+    skills_p.add_argument(
         "--secrets",
         action="append",
         default=[],
@@ -184,7 +190,7 @@ def app() -> None:
         return
     if args.command == "skills":
         folder = _resolve_powers_folder(args.root, use_examples=False)
-        _cmd_skills(folder, args.secrets, args.output, args.stdout)
+        _cmd_skills(folder, args.secrets, args.output, args.stdout, args.select_all, args.root)
         return
 
     parser.error("unknown command")
@@ -567,14 +573,100 @@ def _docs_to_markdown(docs_out: list[dict]) -> str:
 
 _SUPYPOWER_SKILL_PREFIX = "supypower-"
 
+# Registry of AI coding tools and their skills folder conventions.
+AI_TOOL_FOLDERS: list[dict[str, str]] = [
+    {"name": "Claude Code", "detect": ".claude", "skills": ".claude/skills"},
+    {"name": "Cursor", "detect": ".cursor", "skills": ".cursor/skills"},
+    {"name": "Codex", "detect": ".agents", "skills": ".agents/skills"},
+    {"name": "Copilot", "detect": ".copilot", "skills": ".copilot/skills"},
+    {"name": "Windsurf", "detect": ".windsurf", "skills": ".windsurf/skills"},
+]
 
-def _cmd_skills(folder: Path, secrets: list[str], output_path: Path | None, stdout: bool) -> None:
-    """Generate per-script skill files for AI agents."""
+
+def detect_ai_tool_folders(root: Path) -> list[dict[str, str]]:
+    """Return AI tool entries whose detection folder exists under root."""
+    return [entry for entry in AI_TOOL_FOLDERS if (root / entry["detect"]).is_dir()]
+
+
+def _prompt_skill_output_dirs(
+    root: Path,
+    detected: list[dict[str, str]],
+) -> list[Path]:
+    """Interactive prompt for selecting which AI tool folders to populate with skills."""
+    from rich.console import Console
+    from rich.prompt import Prompt
+
+    console = Console(stderr=True)
+
+    if not detected:
+        console.print(
+            "[yellow]No AI tool folders detected[/yellow] "
+            "(.claude, .cursor, .agents, .copilot, .windsurf)"
+        )
+        custom = Prompt.ask("Enter skills output path", default=".claude/skills")
+        return [root / custom]
+
+    console.print()
+    console.print("[bold]Detected AI tool folders:[/bold]")
+    console.print()
+    for i, entry in enumerate(detected, 1):
+        console.print(f"  [cyan]{i}[/cyan]. {entry['name']}  [dim]({entry['skills']}/)[/dim]")
+    console.print()
+
+    choice = Prompt.ask(
+        "Select folders (comma-separated numbers, or 'a' for all)",
+        default="a",
+    )
+
+    if choice.strip().lower() == "a":
+        return [root / e["skills"] for e in detected]
+
+    indices = []
+    for part in choice.split(","):
+        part = part.strip()
+        if part.isdigit():
+            idx = int(part) - 1
+            if 0 <= idx < len(detected):
+                indices.append(idx)
+
+    if not indices:
+        console.print("[yellow]Invalid selection, defaulting to all.[/yellow]")
+        return [root / e["skills"] for e in detected]
+
+    return [root / detected[i]["skills"] for i in indices]
+
+
+def _write_skills_to_dir(output_dir: Path, skill_files: dict[str, str]) -> None:
+    """Write skill files to a directory, cleaning up stale entries first."""
     import shutil
 
-    env = parse_secrets_args(secrets or [])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for existing in output_dir.iterdir():
+        if existing.is_dir() and existing.name.startswith(_SUPYPOWER_SKILL_PREFIX):
+            shutil.rmtree(existing)
+        elif existing.is_file() and existing.name in ("supypowers.md", "SKILL.md"):
+            existing.unlink()
+    for dir_name, content in skill_files.items():
+        skill_dir = output_dir / dir_name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
 
-    # Gather function docs grouped by script
+
+def _cmd_skills(
+    folder: Path,
+    secrets: list[str],
+    output_path: Path | None,
+    stdout: bool,
+    select_all: bool = False,
+    root: Path = Path("."),
+) -> None:
+    """Generate per-script skill files for AI agents."""
+    from rich.console import Console
+
+    env = parse_secrets_args(secrets or [])
+    console_err = Console(stderr=True)
+
+    # --- Phase 1: Generate skill content ---
     scripts_info: dict[str, list[dict]] = {}
     if folder.exists() and folder.is_dir():
         scripts = sorted(p for p in folder.glob("*.py") if p.is_file())
@@ -602,7 +694,6 @@ def _cmd_skills(folder: Path, secrets: list[str], output_path: Path | None, stdo
             except Exception:
                 pass  # Skip scripts that fail to load
 
-    # Generate per-script skill files
     skill_files: dict[str, str] = {}
     for script_name in sorted(scripts_info.keys()):
         functions = scripts_info[script_name]
@@ -613,38 +704,41 @@ def _cmd_skills(folder: Path, secrets: list[str], output_path: Path | None, stdo
         print("\n".join(skill_files.values()))
         return
 
-    output_dir = Path(output_path) if output_path else Path(".claude/skills")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # --- Phase 2: Determine output directories ---
+    if output_path:
+        output_dirs = [Path(output_path)]
+    else:
+        detected = detect_ai_tool_folders(root)
+        if select_all or not sys.stdin.isatty():
+            if detected:
+                output_dirs = [root / e["skills"] for e in detected]
+            else:
+                output_dirs = [root / ".claude/skills"]
+        else:
+            output_dirs = _prompt_skill_output_dirs(root, detected)
 
-    # Clean up stale managed skill directories and legacy files
-    for existing in output_dir.iterdir():
-        if existing.is_dir() and existing.name.startswith(_SUPYPOWER_SKILL_PREFIX):
-            shutil.rmtree(existing)
-        elif existing.is_file() and existing.name in ("supypowers.md", "SKILL.md"):
-            # Clean up legacy single-file outputs
-            existing.unlink()
+    # --- Phase 3: Write to each selected directory ---
+    for output_dir in output_dirs:
+        _write_skills_to_dir(output_dir, skill_files)
 
-    # Write new skill directories
-    for dir_name, content in skill_files.items():
-        skill_dir = output_dir / dir_name
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
-
+    # --- Phase 4: Output summary ---
+    func_count = sum(len(fns) for fns in scripts_info.values())
     print(json.dumps({
         "ok": True,
         "skills": len(skill_files),
-        "functions": sum(len(fns) for fns in scripts_info.values()),
-        "output_dir": str(output_dir),
+        "functions": func_count,
+        "output_dir": str(output_dirs[0]),
+        "output_dirs": [str(d) for d in output_dirs],
     }))
 
-    import sys as _sys
-    _sys.stderr.write(
-        f"Generated {len(skill_files)} skills "
-        f"({sum(len(fns) for fns in scripts_info.values())} functions) "
-        f"in {output_dir}\n"
+    console_err.print(
+        f"[green]\u2713[/green] Generated [cyan]{len(skill_files)}[/cyan] skills "
+        f"({func_count} functions) in [cyan]{len(output_dirs)}[/cyan] location(s)"
     )
-    for dir_name in sorted(skill_files.keys()):
-        _sys.stderr.write(f"  {dir_name}/SKILL.md\n")
+    for output_dir in output_dirs:
+        console_err.print(f"  [dim]{output_dir}/[/dim]")
+        for dir_name in sorted(skill_files.keys()):
+            console_err.print(f"    {dir_name}/SKILL.md")
 
 
 def _generate_skill_md(script_name: str, functions: list[dict]) -> str:

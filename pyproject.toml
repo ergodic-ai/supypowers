@@ -20,7 +20,10 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
   "Topic :: Utilities",
 ]
-dependencies = []
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/ergodic-ai/supypowers"
